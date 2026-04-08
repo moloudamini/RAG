@@ -16,7 +16,7 @@ A multi-agent system with Retrieval-Augmented Generation (RAG) that uses LangGra
 
 ## RAG Pipeline Architecture
 
-![RAG System Architecture](docs/architecture-diagram.svg)
+![RAG System Architecture](assets/diagram.png)
 
 *For a detailed view of the system architecture, see the diagram above showing the LangGraph agent orchestration with Q&A and Analytics agents.*
 
