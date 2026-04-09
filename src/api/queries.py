@@ -20,7 +20,6 @@ class QueryRequest(BaseModel):
     query: str = Field(
         ..., description="Natural language query", min_length=1, max_length=1000
     )
-    company_id: Optional[int] = Field(None, description="Company ID for context")
     force_agent: Optional[str] = Field(
         None, description="Force specific agent: 'qa' or 'analytics'"
     )
@@ -37,8 +36,7 @@ class SQLResponse(BaseModel):
 class DocumentResponse(BaseModel):
     """Response model for retrieved documents."""
 
-    id: int
-    title: str
+    id: Optional[str] = None
     content: str
     similarity_score: float
     metadata: dict
@@ -58,9 +56,7 @@ class QueryResponse(BaseModel):
 
 
 @router.post("/", response_model=QueryResponse)
-async def process_query(
-    request: QueryRequest, db: AsyncSession = Depends(get_db_session)
-) -> QueryResponse:
+async def process_query(request: QueryRequest) -> QueryResponse:
     """Process a natural language query using LangGraph agents."""
 
     import asyncio
@@ -73,9 +69,7 @@ async def process_query(
         orchestrator = AgentOrchestrator()
 
         # Process query with appropriate agent
-        result = await orchestrator.process_query(
-            request.query, request.company_id, request.force_agent
-        )
+        result = await orchestrator.process_query(request.query, request.force_agent)
 
         # Convert result to API response format
         sql_response = None
@@ -88,8 +82,7 @@ async def process_query(
 
         documents = [
             DocumentResponse(
-                id=doc["id"],
-                title=doc["title"],
+                id=doc.get("metadata", {}).get("doc_id"),
                 content=doc["content"][:500],  # Truncate for response
                 similarity_score=doc["similarity_score"],
                 metadata=doc["metadata"],
@@ -128,10 +121,8 @@ async def process_qa_query(
     request: QueryRequest, db: AsyncSession = Depends(get_db_session)
 ) -> QueryResponse:
     """Process a query using the Q&A agent specifically."""
-    forced = QueryRequest(
-        query=request.query, company_id=request.company_id, force_agent="qa"
-    )
-    return await process_query(forced, db)
+    forced = QueryRequest(query=request.query, force_agent="qa")
+    return await process_query(forced)
 
 
 @router.post("/analytics", response_model=QueryResponse)
@@ -139,9 +130,7 @@ async def process_analytics_query(
     request: QueryRequest, db: AsyncSession = Depends(get_db_session)
 ) -> QueryResponse:
     """Process a query using the Analytics agent specifically."""
-    forced = QueryRequest(
-        query=request.query, company_id=request.company_id, force_agent="analytics"
-    )
+    forced = QueryRequest(query=request.query, force_agent="analytics")
     return await process_query(forced, db)
 
 

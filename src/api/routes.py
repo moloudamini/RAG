@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 
-from . import queries, health, metrics, schema, companies, documents
+from . import queries, health, metrics, schema, companies
 
 api_router = APIRouter()
 
@@ -12,4 +12,3 @@ api_router.include_router(health.router, prefix="/health", tags=["health"])
 api_router.include_router(metrics.router, prefix="/metrics", tags=["metrics"])
 api_router.include_router(schema.router, prefix="/schema", tags=["schema"])
 api_router.include_router(companies.router, prefix="/companies", tags=["companies"])
-api_router.include_router(documents.router, prefix="/documents", tags=["documents"])

@@ -42,60 +42,6 @@ class Company(Base):
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
 
-    # Relationships
-    documents: Mapped[List["Document"]] = relationship(back_populates="company")
-
-
-class Document(Base):
-    """Document storage for company knowledge base."""
-
-    __tablename__ = "documents"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    company_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("companies.id"), index=True
-    )
-    title: Mapped[str] = mapped_column(String(500), nullable=False)
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    content_type: Mapped[str] = mapped_column(
-        String(50), default="text"
-    )  # text, pdf, html, etc.
-    source_url: Mapped[Optional[str]] = mapped_column(String(1000))
-    doc_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, onupdate=utcnow
-    )
-
-    # Relationships
-    company: Mapped["Company"] = relationship(back_populates="documents")
-    chunks: Mapped[List["DocumentChunk"]] = relationship(back_populates="document")
-
-
-class DocumentChunk(Base):
-    """Document chunks with embeddings for retrieval."""
-
-    __tablename__ = "document_chunks"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    document_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("documents.id"), index=True
-    )
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
-    embedding: Mapped[Optional[str]] = mapped_column(
-        Text
-    )  # JSON string for SQLite/Postgres fallback
-    chunk_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow
-    )
-
-    # Relationships
-    document: Mapped["Document"] = relationship(back_populates="chunks")
-
 
 class Query(Base):
     """User query log for evaluation and analytics."""

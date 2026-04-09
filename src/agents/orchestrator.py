@@ -19,7 +19,6 @@ class AgentState(TypedDict):
     """State for LangGraph agents."""
 
     query: str
-    company_id: Optional[int]
     context: str
     sql_query: Optional[str]
     sql_result: Optional[Dict[str, Any]]
@@ -63,7 +62,7 @@ class QAAgent:
         return self._graph
 
     async def process_query(
-        self, query: str, company_id: Optional[int] = None
+        self, query: str
     ) -> Dict[str, Any]:
         """Process a Q&A query using the LangGraph workflow."""
         import asyncio
@@ -75,7 +74,6 @@ class QAAgent:
         # Initialize state
         initial_state = AgentState(
             query=query,
-            company_id=company_id,
             context="",
             sql_query=None,
             sql_result=None,
@@ -101,15 +99,14 @@ class QAAgent:
     async def _retrieve_documents(self, state: AgentState) -> AgentState:
         """Retrieve relevant documents for the query."""
         try:
-            documents = await self.retrieval.retrieve_documents(
-                state["query"], state["company_id"], top_k=5
-            )
+            
+            documents = await self.retrieval.retrieve_documents(state["query"], top_k=5)
 
             # Build context from documents
             context_parts = []
             for doc in documents[:3]:  # Use top 3 documents
-                context_parts.append(f"Document: {doc['title']}")
-                context_parts.append(f"Content: {doc['content'][:1000]}...")  # Truncate
+                content = doc.get("content") or "No content available."
+                context_parts.append(f"Content: {content[:1000]}...") 
                 context_parts.append("")
 
             state["documents"] = documents
@@ -229,7 +226,7 @@ class AnalyticsAgent:
         return self._graph  # type: ignore
 
     async def process_query(
-        self, query: str, company_id: Optional[int] = None
+        self, query: str
     ) -> Dict[str, Any]:
         """Process an analytics query using the LangGraph workflow."""
         import asyncio
@@ -241,7 +238,6 @@ class AnalyticsAgent:
         # Initialize state
         initial_state = AgentState(
             query=query,
-            company_id=company_id,
             context="",
             sql_query=None,
             sql_result=None,
@@ -275,7 +271,9 @@ class AnalyticsAgent:
                 from sqlalchemy import select, func
 
                 count_result = await session.execute(
-                    select(func.count()).select_from(SchemaTable).where(
+                    select(func.count())
+                    .select_from(SchemaTable)
+                    .where(
                         SchemaTable.company_id == state["company_id"]
                         if state["company_id"]
                         else True
@@ -367,15 +365,22 @@ class AnalyticsAgent:
             from sqlalchemy.orm import sessionmaker
 
             engine = create_async_engine(business_db_url, pool_pre_ping=True)
-            async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+            async_session = sessionmaker(
+                engine, class_=AsyncSession, expire_on_commit=False
+            )
 
             async with async_session() as session:
-                sql_result = await self.text_to_sql.execute_sql(state["sql_query"], session)
+                sql_result = await self.text_to_sql.execute_sql(
+                    state["sql_query"], session
+                )
 
             await engine.dispose()
             state["sql_result"] = sql_result
             state["context"] += f"\nSQL Result: {sql_result}"
-            logger.info("SQL executed against business DB", row_count=sql_result.get("row_count", 0))
+            logger.info(
+                "SQL executed against business DB",
+                row_count=sql_result.get("row_count", 0),
+            )
 
         except Exception as e:
             logger.error("SQL execution failed", error=str(e))
@@ -398,7 +403,10 @@ class AnalyticsAgent:
 
             # SQL was never generated — explain why and answer from context
             if not state["sql_query"]:
-                reason = state.get("context", "") or "No SQL could be generated for this query."
+                reason = (
+                    state.get("context", "")
+                    or "No SQL could be generated for this query."
+                )
                 answer = await self.llm.generate_answer(
                     state["query"],
                     reason,
@@ -597,7 +605,6 @@ class AgentOrchestrator:
     async def process_query(
         self,
         query: str,
-        company_id: Optional[int] = None,
         force_agent: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
@@ -605,7 +612,6 @@ class AgentOrchestrator:
 
         Args:
             query: The natural language query
-            company_id: Optional company ID for context
             force_agent: Force use of specific agent ('qa' or 'analytics')
 
         Returns:
@@ -617,9 +623,9 @@ class AgentOrchestrator:
         logger.info("Routing query to agent", query=query[:50], agent=agent_type)
 
         if agent_type == "analytics":
-            result = await self.analytics_agent.process_query(query, company_id)
+            result = await self.analytics_agent.process_query(query)
         else:
-            result = await self.qa_agent.process_query(query, company_id)
+            result = await self.qa_agent.process_query(query)
 
         result["agent_used"] = agent_type
         return result

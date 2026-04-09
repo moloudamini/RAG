@@ -1,7 +1,7 @@
 """Text-to-SQL conversion service using Ollama."""
 
 import re
-from typing import Dict, Optional, Any, List
+from typing import Dict, Optional, Any
 import structlog
 
 import ollama
@@ -45,7 +45,9 @@ class TextToSQLService:
 
         sql_query = self._extract_sql(raw_text)
         if not sql_query:
-            raise ValueError(f"Could not extract SQL from model response: {raw_text[:200]}")
+            raise ValueError(
+                f"Could not extract SQL from model response: {raw_text[:200]}"
+            )
 
         is_valid = self._validate_sql(sql_query)
         confidence = self._calculate_confidence(sql_query)
@@ -58,7 +60,12 @@ class TextToSQLService:
             "schema_used": schema_context,
         }
 
-        logger.info("SQL generated", sql=sql_query[:100], confidence=confidence, is_valid=is_valid)
+        logger.info(
+            "SQL generated",
+            sql=sql_query[:100],
+            confidence=confidence,
+            is_valid=is_valid,
+        )
         return result
 
     async def execute_sql(
@@ -98,7 +105,7 @@ class TextToSQLService:
             return "No schema context available."
 
         try:
-            from ..core.models import SchemaTable, SchemaColumn, Document
+            from ..core.models import SchemaTable
             from sqlalchemy import select
 
             # Try structured schema tables first
@@ -112,8 +119,8 @@ class TextToSQLService:
             if tables:
                 return await self._format_schema_from_tables(tables, db)
 
-            # Fallback: derive schema hint from document titles
-            return await self._schema_from_documents(company_id, db)
+            # Fallback: deriving schema from documents is now skipped to keep SQL clean for analytics only
+            return "No structured schema found. Analytics features may be limited."
 
         except Exception as e:
             logger.error("Failed to get schema context", error=str(e))
@@ -199,7 +206,10 @@ SQL Query:"""
         lines = []
         for line in sql.split("\n"):
             lower = line.lower().strip()
-            if any(lower.startswith(m) for m in ("explanation:", "note:", "this query", "the sql", "--")):
+            if any(
+                lower.startswith(m)
+                for m in ("explanation:", "note:", "this query", "the sql", "--")
+            ):
                 break
             lines.append(line)
 
@@ -210,8 +220,20 @@ SQL Query:"""
         if not sql:
             return False
         upper = sql.upper()
-        dangerous = ["DROP", "DELETE", "UPDATE", "INSERT", "ALTER", "CREATE", "TRUNCATE"]
-        return "SELECT" in upper and "FROM" in upper and not any(kw in upper for kw in dangerous)
+        dangerous = [
+            "DROP",
+            "DELETE",
+            "UPDATE",
+            "INSERT",
+            "ALTER",
+            "CREATE",
+            "TRUNCATE",
+        ]
+        return (
+            "SELECT" in upper
+            and "FROM" in upper
+            and not any(kw in upper for kw in dangerous)
+        )
 
     def _calculate_confidence(self, sql: str) -> float:
         confidence = 0.5
