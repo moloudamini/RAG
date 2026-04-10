@@ -263,29 +263,10 @@ class AnalyticsAgent:
         return result
 
     async def _generate_sql(self, state: AgentState) -> AgentState:
-        """Generate SQL from natural language query."""
+        """Generate SQL from natural language query using live DB schema."""
         try:
             async with get_db_session_context() as session:
-                from ..core.models import SchemaTable
-                from sqlalchemy import select, func
-
-                count_result = await session.execute(
-                    select(func.count()).select_from(SchemaTable)
-                )
-                schema_count = count_result.scalar()
-
-                if not schema_count:
-                    logger.warning("No schema registered for SQL generation — skipping SQL")
-                    state["sql_query"] = None
-                    state["context"] = (
-                        "No database schema registered. "
-                        "Register table schemas via POST /api/schema/tables to enable NL-to-SQL."
-                    )
-                    return state
-
-                sql_result = await self.text_to_sql.generate_sql(
-                    state["query"], session
-                )
+                sql_result = await self.text_to_sql.generate_sql(state["query"], session)
 
             state["sql_query"] = sql_result.get("sql")
             state["context"] = f"Generated SQL: {state['sql_query']}"
@@ -326,60 +307,22 @@ class AnalyticsAgent:
         return state
 
     async def _execute_sql(self, state: AgentState) -> AgentState:
-        """Return the generated SQL. Execution runs only when a business_db_url is configured."""
+        """Execute the generated SQL against the application database."""
         if not state["sql_query"]:
             state["sql_result"] = {"status": "no_sql", "data": []}
             return state
 
-        from ..core.config import settings
-
-        business_db_url = settings.business_db_url
-        if not business_db_url:
-            # SQL generated but no separate business DB configured — return SQL for user to run
-            state["sql_result"] = {
-                "status": "sql_ready",
-                "message": (
-                    "SQL generated successfully. Configure BUSINESS_DB_URL env var "
-                    "to enable automatic execution against your business database."
-                ),
-                "data": [],
-                "row_count": 0,
-            }
-            state["context"] += f"\nGenerated SQL (ready to run): {state['sql_query']}"
-            logger.info("SQL ready (no business DB configured for execution)")
-            return state
-
         try:
-            from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-            from sqlalchemy.orm import sessionmaker
+            async with get_db_session_context() as session:
+                sql_result = await self.text_to_sql.execute_sql(state["sql_query"], session)
 
-            engine = create_async_engine(business_db_url, pool_pre_ping=True)
-            async_session = sessionmaker(
-                engine, class_=AsyncSession, expire_on_commit=False
-            )
-
-            async with async_session() as session:
-                sql_result = await self.text_to_sql.execute_sql(
-                    state["sql_query"], session
-                )
-
-            await engine.dispose()
             state["sql_result"] = sql_result
             state["context"] += f"\nSQL Result: {sql_result}"
-            logger.info(
-                "SQL executed against business DB",
-                row_count=sql_result.get("row_count", 0),
-            )
+            logger.info("SQL executed", row_count=sql_result.get("row_count", 0))
 
         except Exception as e:
             logger.error("SQL execution failed", error=str(e))
-            # DB unreachable — treat as sql_ready so insights are still clean
-            state["sql_result"] = {
-                "status": "sql_ready",
-                "message": "Business database could not be reached. SQL was generated successfully.",
-                "data": [],
-                "row_count": 0,
-            }
+            state["sql_result"] = {"error": str(e), "data": [], "row_count": 0}
 
         return state
 
@@ -387,40 +330,33 @@ class AnalyticsAgent:
         """Generate insights from SQL results."""
         try:
             sql_result = state["sql_result"] or {}
-            sql_status = sql_result.get("status", "")
             has_data = bool(sql_result.get("data"))
 
-            # SQL was never generated — explain why and answer from context
+            # SQL was never generated
             if not state["sql_query"]:
-                reason = (
-                    state.get("context", "")
-                    or "No SQL could be generated for this query."
-                )
                 answer = await self.llm.generate_answer(
                     state["query"],
-                    reason,
+                    state.get("context", "") or "No SQL could be generated for this query.",
                     max_tokens=400,
                     temperature=0.3,
                 )
                 state["answer"] = answer
                 state["tokens_used"] = 0
-                logger.info("No SQL generated; answering from context")
                 return state
 
-            # SQL generated but no data returned yet — show SQL with instructions
-            if not has_data and sql_status in ("sql_ready", "no_sql", ""):
-                sql = state["sql_query"]
-                msg = sql_result.get(
-                    "message",
-                    "Configure the BUSINESS_DB_URL environment variable to execute this query automatically.",
+            # SQL executed but returned an error or no rows
+            if not has_data:
+                error = sql_result.get("error", "")
+                context = (
+                    f"SQL query was generated but returned no results.\n"
+                    f"SQL: {state['sql_query']}\n"
+                    + (f"Error: {error}" if error else "The query returned 0 rows.")
                 )
-                state["answer"] = (
-                    f"Here is the SQL query generated for your request:\n\n"
-                    f"```sql\n{sql}\n```\n\n"
-                    f"{msg}"
+                answer = await self.llm.generate_answer(
+                    state["query"], context, max_tokens=300, temperature=0.3
                 )
+                state["answer"] = answer
                 state["tokens_used"] = 0
-                logger.info("Returning sql_ready answer (no data to analyze)")
                 return state
 
             # Data available — ask LLM to analyze it

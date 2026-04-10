@@ -1,14 +1,14 @@
-# RAG System - Text-to-SQL and Q&A with LangGraph Agents
+# Multi-agent system (Text-to-SQL and Q&A)
 
-A multi-agent system with Retrieval-Augmented Generation (RAG) that uses LangGraph to orchestrate two specialized agents: a **Q&A agent** backed by a vector store and a **text-to-SQL analytics agent** backed by registered table schemas.
+A multi-agent system with Retrieval-Augmented Generation (RAG) that uses LangGraph to orchestrate two specialized agents: a **Q&A agent** backed by a vector store and a **text-to-SQL analytics agent** that convert NL-to-SQL and execute SQL query.
 
 ## Features
 
 - **LangGraph Agent Orchestration**: Q&A and Analytics agents with structured workflows
 - **Q&A Agent**: Answers general questions using vector store document retrieval
-- **Analytics Agent**: Handles analytical queries with text-to-SQL conversion and data insights
+- **Analytics Agent**: Converts natural language to SQL, executes it, and returns insights — all against one database
+- **Auto Schema Introspection**: Reads live table schemas directly from the database — no manual registration needed
 - **Automatic Query Routing**: Intelligently routes queries to the appropriate agent based on content
-- **Schema Registration**: Register your database table schemas for NL-to-SQL via REST API
 - **Ollama Integration**: Local LLM inference for cost-effective, private deployment
 - **Evaluation Pipeline**: Metrics including link accuracy, relevance, and response time
 - **W&B Integration**: Experiment tracking and performance monitoring
@@ -37,7 +37,6 @@ A multi-agent system with Retrieval-Augmented Generation (RAG) that uses LangGra
 
 #### Analytics Agent
 - **Purpose**: Handle analytical queries requiring SQL data access
-- **Backend**: Registered table schemas (via `/api/schema/tables`) for NL-to-SQL
 - **Workflow**: `generate_sql → validate_sql → execute_sql → generate_insights → evaluate_response`
 
 ### Query Routing
@@ -67,15 +66,8 @@ uv sync
 Create a `.env` file:
 
 ```env
-# Database (SQLite for dev, PostgreSQL for production)
+# Database
 DATABASE_URL=postgresql://rag_user:rag_password@localhost:5432/rag_db
-
-# Ollama
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=llama3.2:3b
-
-# Optional: separate business DB to execute generated SQL against
-BUSINESS_DB_URL=postgresql://user:pass@host:5432/your_business_db
 
 # W&B (optional)
 WANDB_API_KEY=your_wandb_api_key
@@ -123,33 +115,6 @@ curl -X POST "http://localhost:8000/api/v1/queries/" \
   -d '{"query": "Explain our sales trends", "force_agent": "analytics"}'
 ```
 
-### Register Table Schemas (for Analytics Agent)
-
-The Analytics Agent needs to know your database structure to generate correct SQL:
-
-```bash
-# Register a table
-curl -X POST "http://localhost:8000/api/v1/schema/tables" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "table_name": "orders",
-    "description": "Customer orders",
-    "columns": [
-      {"name": "id", "data_type": "INTEGER", "is_primary_key": true},
-      {"name": "customer_id", "data_type": "INTEGER", "is_foreign_key": true},
-      {"name": "amount", "data_type": "FLOAT", "description": "Order total"},
-      {"name": "category", "data_type": "VARCHAR"},
-      {"name": "created_at", "data_type": "TIMESTAMP"}
-    ]
-  }'
-
-# List registered tables
-curl "http://localhost:8000/api/v1/schema/tables"
-
-# Delete a table schema
-curl -X DELETE "http://localhost:8000/api/v1/schema/tables/{table_id}"
-```
-
 ### Response Format
 
 ```json
@@ -177,9 +142,8 @@ curl -X DELETE "http://localhost:8000/api/v1/schema/tables/{table_id}"
 | Setting | Description | Default |
 |---------|-------------|---------|
 | `DATABASE_URL` | App database (schema registry, query logs) | Required |
-| `BUSINESS_DB_URL` | Business database for SQL execution | Optional |
 | `OLLAMA_BASE_URL` | Ollama API endpoint | `http://localhost:11434` |
-| `OLLAMA_MODEL` | LLM model for generation | `llama3.2:3b` |
+| `OLLAMA_MODEL` | LLM model for generation | `llama3.2` |
 | `VECTOR_DIMENSION` | Embedding vector size | `768` |
 | `SIMILARITY_THRESHOLD` | Document retrieval threshold | `0.7` |
 | `WANDB_API_KEY` | Weights & Biases API key | Optional |
@@ -194,9 +158,6 @@ uv run pytest tests/ --cov=src --cov-report=html
 uv run ruff check .
 uv run ruff format .
 
-# Create tables manually
-python -c "import asyncio; from src.core.database import create_tables; asyncio.run(create_tables())"
-```
 
 ## Docker Deployment
 

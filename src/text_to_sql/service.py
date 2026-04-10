@@ -2,8 +2,8 @@
 
 import re
 from typing import Dict, Optional, Any
-import structlog
 
+import structlog
 import ollama
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,9 +12,11 @@ from ..core.config import settings
 
 logger = structlog.get_logger()
 
+_SYSTEM_TABLES = {"queries", "query_evaluations"}
+
 
 class TextToSQLService:
-    """Service for converting natural language queries to SQL using Ollama."""
+    """Converts natural language queries to SQL using schema introspection."""
 
     def __init__(self):
         self.client = ollama.AsyncClient(host=settings.ollama_base_url)
@@ -23,14 +25,13 @@ class TextToSQLService:
     async def generate_sql(
         self,
         natural_query: str,
-        db: Optional[AsyncSession] = None,
+        db: AsyncSession,
     ) -> Dict[str, Any]:
         """Convert natural language query to SQL and execute it."""
         logger.info("Generating SQL", query=natural_query[:100])
 
-        schema_context = await self._get_schema_context(db)
-
-        prompt = self._create_sql_prompt(natural_query, schema_context)
+        schema_context = await self._introspect_schema(db)
+        prompt = self._build_prompt(natural_query, schema_context)
 
         response = await self.client.generate(
             model=self.model,
@@ -44,14 +45,14 @@ class TextToSQLService:
 
         sql_query = self._extract_sql(raw_text)
         if not sql_query:
-            raise ValueError(
-                f"Could not extract SQL from model response: {raw_text[:200]}"
-            )
+            raise ValueError(f"Could not extract SQL from model response: {raw_text[:200]}")
 
         is_valid = self._validate_sql(sql_query)
         confidence = self._calculate_confidence(sql_query)
 
-        result = {
+        logger.info("SQL generated", sql=sql_query[:100], confidence=confidence, is_valid=is_valid)
+
+        return {
             "sql": sql_query,
             "confidence": confidence,
             "is_valid": is_valid,
@@ -59,20 +60,7 @@ class TextToSQLService:
             "schema_used": schema_context,
         }
 
-        logger.info(
-            "SQL generated",
-            sql=sql_query[:100],
-            confidence=confidence,
-            is_valid=is_valid,
-        )
-        return result
-
-    async def execute_sql(
-        self,
-        sql_query: str,
-        db: AsyncSession,
-        max_rows: int = 100,
-    ) -> Dict[str, Any]:
+    async def execute_sql(self, sql_query: str, db: AsyncSession, max_rows: int = 100) -> Dict[str, Any]:
         """Execute a validated SQL query and return results."""
         if not self._validate_sql(sql_query):
             return {"error": "SQL failed safety validation", "rows": [], "row_count": 0}
@@ -81,7 +69,6 @@ class TextToSQLService:
             result = await db.execute(text(sql_query))
             rows = result.fetchmany(max_rows)
             columns = list(result.keys()) if result.keys() else []
-
             data = [dict(zip(columns, row)) for row in rows]
 
             logger.info("SQL executed", row_count=len(data))
@@ -96,61 +83,72 @@ class TextToSQLService:
             logger.error("SQL execution failed", error=str(e), sql=sql_query[:200])
             return {"error": str(e), "rows": [], "row_count": 0}
 
-    async def _get_schema_context(self, db: Optional[AsyncSession]) -> str:
-        """Build schema context from SchemaTable/SchemaColumn rows."""
-        if not db:
-            return "No schema context available."
-
+    async def _introspect_schema(self, db: AsyncSession) -> str:
+        """Build schema context by reading table/column info from database."""
         try:
-            from ..core.models import SchemaTable
-            from sqlalchemy import select
+            tables_sql = text("""
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_schema = 'public'
+                  AND table_type = 'BASE TABLE'
+                ORDER BY table_name
+            """)
+            result = await db.execute(tables_sql)
+            table_names = [row[0] for row in result.fetchall()]
+        except Exception:
+            # SQLite fallback
+            try:
+                result = await db.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
+                table_names = [row[0] for row in result.fetchall()]
+            except Exception as e:
+                logger.error("Schema introspection failed", error=str(e))
+                return "Schema introspection unavailable."
 
-            tables_result = await db.execute(select(SchemaTable))
-            tables = tables_result.scalars().all()
+        # Filter out system tables
+        table_names = [t for t in table_names if t not in _SYSTEM_TABLES]
 
-            if tables:
-                return await self._format_schema_from_tables(tables, db)
-
-            return "No structured schema found. Register table schemas via POST /api/schema/tables."
-
-        except Exception as e:
-            logger.error("Failed to get schema context", error=str(e))
-            return "Schema context unavailable."
-
-    async def _format_schema_from_tables(self, tables, db: AsyncSession) -> str:
-        """Format schema context from SchemaTable + SchemaColumn rows."""
-        from ..core.models import SchemaColumn
-        from sqlalchemy import select
+        if not table_names:
+            return "No business tables found in the database."
 
         parts = []
-        for table in tables:
-            cols_result = await db.execute(
-                select(SchemaColumn).where(SchemaColumn.table_id == table.id)
-            )
-            cols = cols_result.scalars().all()
-            col_defs = []
-            for col in cols:
-                markers = []
-                if col.is_primary_key:
-                    markers.append("PK")
-                if col.is_foreign_key:
-                    markers.append("FK")
-                suffix = f" ({', '.join(markers)})" if markers else ""
-                desc = f" -- {col.description}" if col.description else ""
-                col_defs.append(f"  {col.name} {col.data_type}{suffix}{desc}")
-
-            parts.append(f"Table: {table.name}")
-            if table.description:
-                parts.append(f"  Description: {table.description}")
-            parts.extend(col_defs)
-            parts.append("")
+        for table in table_names:
+            try:
+                cols = await self._get_columns(db, table)
+                parts.append(f"Table: {table}")
+                parts.extend(f"  {col}" for col in cols)
+                parts.append("")
+            except Exception as e:
+                logger.warning("Could not introspect table", table=table, error=str(e))
 
         return "\n".join(parts)
 
-    def _create_sql_prompt(self, query: str, schema_context: str) -> str:
+    async def _get_columns(self, db: AsyncSession, table: str) -> list[str]:
+        """Get column definitions for a table."""
+        try:
+            result = await db.execute(text("""
+                SELECT column_name, data_type,
+                       is_nullable,
+                       column_default
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = :table
+                ORDER BY ordinal_position
+            """), {"table": table})
+            rows = result.fetchall()
+            if rows:
+                return [f"{r[0]} {r[1].upper()}" for r in rows]
+        except Exception:
+            pass
+
+        # SQLite fallback using PRAGMA
+        result = await db.execute(text(f"PRAGMA table_info({table})"))
+        rows = result.fetchall()
+        return [f"{r[1]} {r[2].upper()}" for r in rows]
+
+    def _build_prompt(self, query: str, schema_context: str) -> str:
         return f"""You are an expert SQL developer. Convert the natural language query below to a valid SQL SELECT statement.
 
-Database Schema / Context:
+Database Schema:
 {schema_context}
 
 Natural Language Query: {query}
@@ -158,50 +156,30 @@ Natural Language Query: {query}
 Rules:
 1. Output ONLY the SQL query — no explanation, no markdown fences
 2. Use only SELECT statements (no INSERT, UPDATE, DELETE, DROP)
-3. Use proper table and column names from the schema above
+3. Use only table and column names from the schema above
 4. End the query with a semicolon
 
 SQL Query:"""
 
     def _extract_sql(self, response: str) -> str:
-        """Extract clean SQL from LLM response."""
-        # Strip markdown code fences
         sql = re.sub(r"```sql\s*", "", response, flags=re.IGNORECASE)
-        sql = re.sub(r"```\s*", "", sql)
-        sql = sql.strip()
+        sql = re.sub(r"```\s*", "", sql).strip()
 
-        # Take only lines up to the first explanation
         lines = []
         for line in sql.split("\n"):
             lower = line.lower().strip()
-            if any(
-                lower.startswith(m)
-                for m in ("explanation:", "note:", "this query", "the sql", "--")
-            ):
+            if any(lower.startswith(m) for m in ("explanation:", "note:", "this query", "the sql", "--")):
                 break
             lines.append(line)
 
         return "\n".join(lines).strip()
 
     def _validate_sql(self, sql: str) -> bool:
-        """Ensure SQL is a safe SELECT-only query."""
         if not sql:
             return False
         upper = sql.upper()
-        dangerous = [
-            "DROP",
-            "DELETE",
-            "UPDATE",
-            "INSERT",
-            "ALTER",
-            "CREATE",
-            "TRUNCATE",
-        ]
-        return (
-            "SELECT" in upper
-            and "FROM" in upper
-            and not any(kw in upper for kw in dangerous)
-        )
+        dangerous = ["DROP", "DELETE", "UPDATE", "INSERT", "ALTER", "CREATE", "TRUNCATE"]
+        return "SELECT" in upper and "FROM" in upper and not any(kw in upper for kw in dangerous)
 
     def _calculate_confidence(self, sql: str) -> float:
         confidence = 0.5

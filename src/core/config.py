@@ -49,13 +49,19 @@ class Settings(BaseSettings):
     )
 
     # Hybrid Retrieval Settings
-    bm25_weight: float = Field(default=0.3, description="BM25 score weight in hybrid fusion")
-    vector_weight: float = Field(default=0.7, description="Vector score weight in hybrid fusion")
+    bm25_weight: float = Field(
+        default=0.3, description="BM25 score weight in hybrid fusion"
+    )
+    vector_weight: float = Field(
+        default=0.7, description="Vector score weight in hybrid fusion"
+    )
     reranker_model: str = Field(
         default="cross-encoder/ms-marco-MiniLM-L-6-v2",
         description="Cross-encoder model for reranking",
     )
-    use_reranker: bool = Field(default=True, description="Enable cross-encoder reranking")
+    use_reranker: bool = Field(
+        default=True, description="Enable cross-encoder reranking"
+    )
 
     # Security Settings
     secret_key: str = Field(
@@ -64,12 +70,6 @@ class Settings(BaseSettings):
     )
     jwt_expiration_hours: int = Field(
         default=24, description="JWT token expiration in hours"
-    )
-
-    # Business Database Settings (separate from RAG app DB)
-    business_db_url: Optional[str] = Field(
-        default=None,
-        description="URL of the business database for SQL execution (e.g. postgresql+asyncpg://...)",
     )
 
     # W&B Settings
