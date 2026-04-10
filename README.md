@@ -84,6 +84,21 @@ docker-compose -f docker/docker-compose.yml up -d
 ollama serve
 ```
 
+### 5. Database Migrations and Seeding
+
+Before running the application for the first time, you need to set up the database schema and add some sample data:
+
+```bash
+# Run database migrations to create tables
+uv run alembic upgrade head
+
+# Seed the database with sample company and product data
+uv run python -m src.scripts.seed_business_data
+
+# Ingest initial documents for the Q&A agent
+uv run python -m src.scripts.ingest
+```
+
 ## API Usage
 
 ### Submit a Query

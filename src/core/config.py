@@ -27,8 +27,8 @@ class Settings(BaseSettings):
 
     # Database Settings
     database_url: str = Field(
-        default="sqlite+aiosqlite:///./rag.db",
-        description="Database URL (SQLite for development)",
+        default="postgresql://rag_user:rag_password@localhost:5432/rag_db",
+        description="Database URL",
     )
 
     # Ollama Settings

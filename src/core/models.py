@@ -58,5 +58,35 @@ class QueryEvaluation(Base):
     query: Mapped["Query"] = relationship(back_populates="evaluations")
 
 
+class Company(Base):
+    """Company information for business analytics."""
+
+    __tablename__ = "companies"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    industry: Mapped[Optional[str]] = mapped_column(String(100))
+    headquarters: Mapped[Optional[str]] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    products: Mapped[List["Product"]] = relationship(back_populates="company", cascade="all, delete-orphan")
+
+
+class Product(Base):
+    """Product information for business analytics."""
+
+    __tablename__ = "products"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    company_id: Mapped[int] = mapped_column(Integer, ForeignKey("companies.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    category: Mapped[Optional[str]] = mapped_column(String(100))
+    price: Mapped[float] = mapped_column(Float, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    company: Mapped["Company"] = relationship(back_populates="products")
+
+
 # Indexes
 Index("ix_queries_created_at", Query.created_at)
