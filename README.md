@@ -5,14 +5,13 @@ A multi-agent system with Retrieval-Augmented Generation (RAG) that uses LangGra
 ## Features
 
 - **LangGraph Agent Orchestration**: Q&A and Analytics agents with structured workflows
-- **Q&A Agent**: Answers general questions using vector store document retrieval
-- **Analytics Agent**: Converts natural language to SQL, executes it, and returns insights — all against one database
-- **Auto Schema Introspection**: Reads live table schemas directly from the database — no manual registration needed
+- **Q&A Agent**: Answers general questions using hybrid search and cross-encoder reranking
+- **Analytics Agent**: Converts natural language to SQL, executes it, and returns insights 
+- **Auto Schema Introspection**: Reads live table schemas directly from the database 
 - **Automatic Query Routing**: Intelligently routes queries to the appropriate agent based on content
 - **Ollama Integration**: Local LLM inference for cost-effective, private deployment
 - **Evaluation Pipeline**: Metrics including link accuracy, relevance, and response time
 - **W&B Integration**: Experiment tracking and performance monitoring
-- **Production Ready**: REST API, Docker containerization, health monitoring, and structured logging
 
 ## Architecture
 ![RAG System Architecture](assets/diagram.png)
@@ -32,18 +31,11 @@ A multi-agent system with Retrieval-Augmented Generation (RAG) that uses LangGra
 
 #### Q&A Agent
 - **Purpose**: Answer general questions using the document knowledge base
-- **Backend**: Vector store (ChromaDB/pgvector) for semantic document retrieval
 - **Workflow**: `retrieve_documents → generate_answer → evaluate_response`
 
 #### Analytics Agent
 - **Purpose**: Handle analytical queries requiring SQL data access
 - **Workflow**: `generate_sql → validate_sql → execute_sql → generate_insights → evaluate_response`
-
-### Query Routing
-
-Queries are automatically classified based on keywords and patterns:
-- **Analytics**: "how many", "count", "sum", "sales", "revenue", SQL patterns
-- **Q&A**: "what is", "explain", "describe", general questions
 
 ## Quick Start
 
