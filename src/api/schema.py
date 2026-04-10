@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.database import get_db_session
-from ..core.models import Company, SchemaColumn, SchemaTable
+from ..core.models import SchemaColumn, SchemaTable
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -29,7 +29,6 @@ class ColumnDefinition(BaseModel):
 
 
 class TableCreate(BaseModel):
-    company_name: str = Field(..., description="Company this schema belongs to")
     table_name: str = Field(..., description="Table name as it exists in the actual DB")
     description: Optional[str] = Field(None, description="What this table contains")
     columns: List[ColumnDefinition] = Field(..., min_length=1)
@@ -48,7 +47,6 @@ class ColumnResponse(BaseModel):
 
 class TableResponse(BaseModel):
     id: int
-    company_id: int
     table_name: str
     description: Optional[str]
     columns: List[ColumnResponse]
@@ -81,33 +79,16 @@ async def register_table(
     payload: TableCreate,
     db: AsyncSession = Depends(get_db_session),
 ) -> TableResponse:
-    # Find or create company
-    result = await db.execute(select(Company).where(Company.name == payload.company_name))
-    company = result.scalar_one_or_none()
-
-    if company is None:
-        company = Company(name=payload.company_name)
-        db.add(company)
-        await db.flush()
-        logger.info("Company created", name=payload.company_name)
-
-    # Check if this table is already registered
     existing = await db.execute(
-        select(SchemaTable).where(
-            SchemaTable.company_id == company.id,
-            SchemaTable.name == payload.table_name,
-        )
+        select(SchemaTable).where(SchemaTable.name == payload.table_name)
     )
-    existing_table = existing.scalar_one_or_none()
-    if existing_table:
+    if existing.scalar_one_or_none():
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Table '{payload.table_name}' already registered for company '{payload.company_name}'. Use PUT to update.",
+            detail=f"Table '{payload.table_name}' already registered. Use PUT to update.",
         )
 
-    # Create table entry
     schema_table = SchemaTable(
-        company_id=company.id,
         name=payload.table_name,
         description=payload.description,
         schema_json={},
@@ -115,7 +96,6 @@ async def register_table(
     db.add(schema_table)
     await db.flush()
 
-    # Create column entries
     columns = []
     for col_def in payload.columns:
         col = SchemaColumn(
@@ -132,16 +112,10 @@ async def register_table(
     await db.commit()
     await db.refresh(schema_table)
 
-    logger.info(
-        "Table schema registered",
-        table=payload.table_name,
-        company=payload.company_name,
-        columns=len(columns),
-    )
+    logger.info("Table schema registered", table=payload.table_name, columns=len(columns))
 
     return TableResponse(
         id=schema_table.id,
-        company_id=company.id,
         table_name=schema_table.name,
         description=schema_table.description,
         columns=[
@@ -161,20 +135,12 @@ async def register_table(
 @router.get(
     "/tables",
     response_model=SchemaListResponse,
-    summary="List registered table schemas for a company",
+    summary="List all registered table schemas",
 )
 async def list_tables(
-    company_name: str,
     db: AsyncSession = Depends(get_db_session),
 ) -> SchemaListResponse:
-    result = await db.execute(select(Company).where(Company.name == company_name))
-    company = result.scalar_one_or_none()
-    if company is None:
-        raise HTTPException(status_code=404, detail=f"Company '{company_name}' not found")
-
-    tables_result = await db.execute(
-        select(SchemaTable).where(SchemaTable.company_id == company.id)
-    )
+    tables_result = await db.execute(select(SchemaTable))
     tables = tables_result.scalars().all()
 
     response_tables = []
@@ -186,7 +152,6 @@ async def list_tables(
         response_tables.append(
             TableResponse(
                 id=t.id,
-                company_id=t.company_id,
                 table_name=t.name,
                 description=t.description,
                 columns=[

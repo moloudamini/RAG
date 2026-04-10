@@ -23,13 +23,12 @@ class TextToSQLService:
     async def generate_sql(
         self,
         natural_query: str,
-        company_id: Optional[int] = None,
         db: Optional[AsyncSession] = None,
     ) -> Dict[str, Any]:
         """Convert natural language query to SQL and execute it."""
         logger.info("Generating SQL", query=natural_query[:100])
 
-        schema_context = await self._get_schema_context(company_id, db)
+        schema_context = await self._get_schema_context(db)
 
         prompt = self._create_sql_prompt(natural_query, schema_context)
 
@@ -97,10 +96,8 @@ class TextToSQLService:
             logger.error("SQL execution failed", error=str(e), sql=sql_query[:200])
             return {"error": str(e), "rows": [], "row_count": 0}
 
-    async def _get_schema_context(
-        self, company_id: Optional[int], db: Optional[AsyncSession]
-    ) -> str:
-        """Build schema context from SchemaTable/SchemaColumn rows, with document-based fallback."""
+    async def _get_schema_context(self, db: Optional[AsyncSession]) -> str:
+        """Build schema context from SchemaTable/SchemaColumn rows."""
         if not db:
             return "No schema context available."
 
@@ -108,19 +105,13 @@ class TextToSQLService:
             from ..core.models import SchemaTable
             from sqlalchemy import select
 
-            # Try structured schema tables first
-            stmt = select(SchemaTable)
-            if company_id:
-                stmt = stmt.where(SchemaTable.company_id == company_id)
-
-            tables_result = await db.execute(stmt)
+            tables_result = await db.execute(select(SchemaTable))
             tables = tables_result.scalars().all()
 
             if tables:
                 return await self._format_schema_from_tables(tables, db)
 
-            # Fallback: deriving schema from documents is now skipped to keep SQL clean for analytics only
-            return "No structured schema found. Analytics features may be limited."
+            return "No structured schema found. Register table schemas via POST /api/schema/tables."
 
         except Exception as e:
             logger.error("Failed to get schema context", error=str(e))
@@ -155,29 +146,6 @@ class TextToSQLService:
             parts.append("")
 
         return "\n".join(parts)
-
-    async def _schema_from_documents(
-        self, company_id: Optional[int], db: AsyncSession
-    ) -> str:
-        """Fallback: use document titles as a hint about available information."""
-        from ..core.models import Document
-        from sqlalchemy import select
-
-        stmt = select(Document.title)
-        if company_id:
-            stmt = stmt.where(Document.company_id == company_id)
-        stmt = stmt.limit(20)
-
-        result = await db.execute(stmt)
-        titles = [row[0] for row in result.all()]
-
-        if not titles:
-            return "No schema or documents found for this company."
-
-        return (
-            "Available document topics (use these as reference, not table names):\n"
-            + "\n".join(f"- {t}" for t in titles)
-        )
 
     def _create_sql_prompt(self, query: str, schema_context: str) -> str:
         return f"""You are an expert SQL developer. Convert the natural language query below to a valid SQL SELECT statement.

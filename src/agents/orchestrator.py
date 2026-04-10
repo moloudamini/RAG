@@ -266,36 +266,25 @@ class AnalyticsAgent:
         """Generate SQL from natural language query."""
         try:
             async with get_db_session_context() as session:
-                # Check if any schema tables are registered before attempting SQL
                 from ..core.models import SchemaTable
                 from sqlalchemy import select, func
 
                 count_result = await session.execute(
-                    select(func.count())
-                    .select_from(SchemaTable)
-                    .where(
-                        SchemaTable.company_id == state["company_id"]
-                        if state["company_id"]
-                        else True
-                    )
+                    select(func.count()).select_from(SchemaTable)
                 )
                 schema_count = count_result.scalar()
 
                 if not schema_count:
-                    logger.warning(
-                        "No schema registered for SQL generation — skipping SQL",
-                        company_id=state["company_id"],
-                    )
+                    logger.warning("No schema registered for SQL generation — skipping SQL")
                     state["sql_query"] = None
                     state["context"] = (
-                        "No database schema registered for this company. "
-                        "Register table schemas via POST /api/schema/tables to enable NL-to-SQL. "
-                        "Answering from documents instead."
+                        "No database schema registered. "
+                        "Register table schemas via POST /api/schema/tables to enable NL-to-SQL."
                     )
                     return state
 
                 sql_result = await self.text_to_sql.generate_sql(
-                    state["query"], state["company_id"], session
+                    state["query"], session
                 )
 
             state["sql_query"] = sql_result.get("sql")

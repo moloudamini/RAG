@@ -3,12 +3,10 @@
 from typing import List, Optional
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..agents.orchestrator import AgentOrchestrator
-from ..core.database import get_db_session
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -117,21 +115,17 @@ async def process_query(request: QueryRequest) -> QueryResponse:
 
 
 @router.post("/qa", response_model=QueryResponse)
-async def process_qa_query(
-    request: QueryRequest, db: AsyncSession = Depends(get_db_session)
-) -> QueryResponse:
+async def process_qa_query(request: QueryRequest) -> QueryResponse:
     """Process a query using the Q&A agent specifically."""
     forced = QueryRequest(query=request.query, force_agent="qa")
     return await process_query(forced)
 
 
 @router.post("/analytics", response_model=QueryResponse)
-async def process_analytics_query(
-    request: QueryRequest, db: AsyncSession = Depends(get_db_session)
-) -> QueryResponse:
+async def process_analytics_query(request: QueryRequest) -> QueryResponse:
     """Process a query using the Analytics agent specifically."""
     forced = QueryRequest(query=request.query, force_agent="analytics")
-    return await process_query(forced, db)
+    return await process_query(forced)
 
 
 @router.get("/agents")

@@ -25,23 +25,6 @@ class Base(DeclarativeBase):
     pass
 
 
-class Company(Base):
-    """Company information model."""
-
-    __tablename__ = "companies"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-    description: Mapped[Optional[str]] = mapped_column(Text)
-    industry: Mapped[Optional[str]] = mapped_column(String(100))
-    website: Mapped[Optional[str]] = mapped_column(String(500))
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, onupdate=utcnow
-    )
-
 
 class Query(Base):
     """User query log for evaluation and analytics."""
@@ -91,10 +74,7 @@ class SchemaTable(Base):
     __tablename__ = "tables"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    company_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("companies.id"), index=True
-    )
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     schema_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     description: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
@@ -102,7 +82,6 @@ class SchemaTable(Base):
     )
 
     # Relationships
-    company: Mapped["Company"] = relationship()
     columns: Mapped[List["SchemaColumn"]] = relationship(back_populates="table")
 
 
