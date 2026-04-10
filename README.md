@@ -95,6 +95,11 @@ uv run alembic upgrade head
 # Seed the database with sample company and product data
 uv run python -m src.scripts.seed_business_data
 
+# Check 
+docker exec -it rag-postgres psql -U rag_user -d rag_db
+
+SELECT * FROM products;
+
 # Ingest initial documents for the Q&A agent
 uv run python -m src.scripts.ingest
 ```
@@ -128,18 +133,18 @@ curl -X POST "http://localhost:8000/api/v1/queries/" \
 {
   "query": "What are the total sales by product category?",
   "agent_used": "analytics",
-  "answer": "Here is the SQL query generated for your request:\n\n```sql\nSELECT category, SUM(amount) FROM orders GROUP BY category;\n```",
   "sql_response": {
-    "sql": "SELECT category, SUM(amount) FROM orders GROUP BY category;",
-    "confidence": 0.85,
+    "sql": "SELECT SUM(p.price) AS total_sales, p.category FROM products p GROUP BY p.category",
+    "confidence": 0.8,
     "is_valid": true
   },
   "documents": [],
-  "response_time_ms": 1250,
-  "tokens_used": 450,
+  "answer": "Based on the SQL results, the total sales by product category are:\n\n* Storage: $2400.00\n* Developer Tools: $45.00\n* Hardware: $850.50\n* Enterprise Software: $1200.00\n\nThese totals can be obtained by summing up the 'total_sales' column for each unique 'category'.",
+  "response_time_ms": 8077,
+  "tokens_used": 206,
   "evaluation_metrics": {
-    "sql_accuracy": 0.85,
-    "relevance": 0.88
+    "sql_accuracy": 0.35,
+    "relevance": 0.2803836409699602
   }
 }
 ```
