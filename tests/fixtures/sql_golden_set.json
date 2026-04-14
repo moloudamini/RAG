@@ -1,0 +1,137 @@
+[
+  {
+    "id": "count_companies",
+    "query": "How many companies are there?",
+    "reference_sql": "SELECT COUNT(*) AS count FROM companies;",
+    "expected_sql_keywords": ["SELECT", "COUNT", "companies"],
+    "expected_columns": ["count"],
+    "expected_row_count": 1,
+    "tags": ["aggregation", "companies"]
+  },
+  {
+    "id": "count_products",
+    "query": "How many products exist in total?",
+    "reference_sql": "SELECT COUNT(*) AS count FROM products;",
+    "expected_sql_keywords": ["SELECT", "COUNT", "products"],
+    "expected_columns": ["count"],
+    "expected_row_count": 1,
+    "tags": ["aggregation", "products"]
+  },
+  {
+    "id": "list_companies",
+    "query": "List all company names",
+    "reference_sql": "SELECT name FROM companies ORDER BY name;",
+    "expected_sql_keywords": ["SELECT", "name", "companies"],
+    "expected_columns": ["name"],
+    "expected_row_count_min": 0,
+    "tags": ["select", "companies"]
+  },
+  {
+    "id": "avg_product_price",
+    "query": "What is the average product price?",
+    "reference_sql": "SELECT AVG(price) AS avg FROM products;",
+    "expected_sql_keywords": ["SELECT", "AVG", "price", "products"],
+    "expected_columns": ["avg"],
+    "expected_row_count": 1,
+    "tags": ["aggregation", "products"]
+  },
+  {
+    "id": "most_expensive_product",
+    "query": "What is the most expensive product?",
+    "reference_sql": "SELECT name, price FROM products ORDER BY price DESC LIMIT 1;",
+    "expected_sql_keywords": ["SELECT", "price", "products"],
+    "expected_columns": ["name", "price"],
+    "expected_row_count_min": 1,
+    "tags": ["select", "products", "ordering"]
+  },
+  {
+    "id": "products_by_company",
+    "query": "How many products does each company have?",
+    "reference_sql": "SELECT c.name, COUNT(p.id) AS count FROM companies c LEFT JOIN products p ON p.company_id = c.id GROUP BY c.id, c.name ORDER BY c.name;",
+    "expected_sql_keywords": ["SELECT", "COUNT", "products", "GROUP BY"],
+    "expected_columns": ["count"],
+    "expected_row_count_min": 0,
+    "tags": ["aggregation", "group_by", "join"]
+  },
+  {
+    "id": "companies_by_industry",
+    "query": "How many companies are in each industry?",
+    "reference_sql": "SELECT industry, COUNT(*) AS count FROM companies WHERE industry IS NOT NULL GROUP BY industry ORDER BY industry;",
+    "expected_sql_keywords": ["SELECT", "COUNT", "companies", "GROUP BY", "industry"],
+    "expected_columns": ["count"],
+    "expected_row_count_min": 0,
+    "tags": ["aggregation", "group_by", "companies"]
+  },
+  {
+    "id": "products_in_category",
+    "query": "List all products in the software category",
+    "reference_sql": "SELECT name, price FROM products WHERE LOWER(category) = 'software' ORDER BY name;",
+    "expected_sql_keywords": ["SELECT", "products", "category"],
+    "expected_columns": ["name"],
+    "expected_row_count_min": 0,
+    "tags": ["filter", "products"]
+  },
+  {
+    "id": "products_above_price",
+    "query": "Which products cost more than 100?",
+    "reference_sql": "SELECT name, price FROM products WHERE price > 100 ORDER BY price DESC;",
+    "expected_sql_keywords": ["SELECT", "products", "price", "WHERE"],
+    "expected_columns": ["name", "price"],
+    "expected_row_count_min": 0,
+    "tags": ["filter", "products"]
+  },
+  {
+    "id": "companies_with_products",
+    "query": "Show all companies along with their product names",
+    "reference_sql": "SELECT c.name AS company, p.name AS product FROM companies c JOIN products p ON p.company_id = c.id ORDER BY c.name, p.name;",
+    "expected_sql_keywords": ["SELECT", "companies", "products", "JOIN"],
+    "expected_columns": ["name"],
+    "expected_row_count_min": 0,
+    "tags": ["join", "companies", "products"]
+  },
+  {
+    "id": "max_product_price_per_company",
+    "query": "What is the most expensive product for each company?",
+    "reference_sql": "SELECT c.name, MAX(p.price) AS max FROM companies c JOIN products p ON p.company_id = c.id GROUP BY c.id, c.name ORDER BY c.name;",
+    "expected_sql_keywords": ["SELECT", "MAX", "price", "GROUP BY"],
+    "expected_columns": ["max"],
+    "expected_row_count_min": 0,
+    "tags": ["aggregation", "group_by", "join"]
+  },
+  {
+    "id": "companies_in_us",
+    "query": "Which companies are headquartered in the United States?",
+    "reference_sql": "SELECT name, headquarters FROM companies WHERE LOWER(headquarters) LIKE '%united states%' OR LOWER(headquarters) LIKE '%usa%' ORDER BY name;",
+    "expected_sql_keywords": ["SELECT", "companies", "headquarters", "WHERE"],
+    "expected_columns": ["name"],
+    "expected_row_count_min": 0,
+    "tags": ["filter", "companies"]
+  },
+  {
+    "id": "total_product_value_per_company",
+    "query": "What is the total value of products for each company?",
+    "reference_sql": "SELECT c.name, SUM(p.price) AS sum FROM companies c JOIN products p ON p.company_id = c.id GROUP BY c.id, c.name ORDER BY c.name;",
+    "expected_sql_keywords": ["SELECT", "SUM", "price", "GROUP BY"],
+    "expected_columns": ["sum"],
+    "expected_row_count_min": 0,
+    "tags": ["aggregation", "group_by", "join"]
+  },
+  {
+    "id": "recent_queries",
+    "query": "How many queries were logged today?",
+    "reference_sql": "SELECT COUNT(*) AS count FROM queries WHERE created_at >= CURRENT_DATE;",
+    "expected_sql_keywords": ["SELECT", "COUNT", "queries"],
+    "expected_columns": ["count"],
+    "expected_row_count": 1,
+    "tags": ["aggregation", "queries", "temporal"]
+  },
+  {
+    "id": "cheapest_product",
+    "query": "What is the cheapest product available?",
+    "reference_sql": "SELECT name, price FROM products ORDER BY price ASC LIMIT 1;",
+    "expected_sql_keywords": ["SELECT", "price", "products"],
+    "expected_columns": ["name", "price"],
+    "expected_row_count_min": 1,
+    "tags": ["select", "products", "ordering"]
+  }
+]

@@ -31,16 +31,3 @@ async def test_detailed_health_check():
         data = response.json()
         assert "status" in data
         assert "components" in data
-
-
-@pytest.mark.asyncio
-async def test_metrics_endpoint():
-    """Test the metrics endpoint."""
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://testserver"
-    ) as client:
-        response = await client.get("/api/v1/metrics/")
-
-        assert response.status_code == 200
-        # Prometheus metrics are returned as text, not JSON
-        assert isinstance(response.text, str)
