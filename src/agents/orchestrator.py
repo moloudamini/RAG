@@ -23,6 +23,7 @@ class AgentState(TypedDict):
     sql_query: Optional[str]
     sql_result: Optional[Dict[str, Any]]
     documents: List[Dict[str, Any]]
+    citations: List[Dict[str, Any]]
     answer: str
     evaluation_metrics: Dict[str, float]
     response_time_ms: int
@@ -36,7 +37,7 @@ class QAAgent:
         """Initialize the Q&A agent."""
         self.retrieval = RetrievalService()
         self.llm = LLMService()
-        self.evaluation = EvaluationService()
+        self.evaluation = EvaluationService(llm=self.llm)
         self.wandb = WandbService()
         self._graph = None  # Cache compiled graph
 
@@ -78,6 +79,7 @@ class QAAgent:
             sql_query=None,
             sql_result=None,
             documents=[],
+            citations=[],
             answer="",
             evaluation_metrics={},
             response_time_ms=0,
@@ -123,62 +125,86 @@ class QAAgent:
         return state
 
     async def _generate_answer(self, state: AgentState) -> AgentState:
-        """Generate answer using retrieved documents."""
+        """Generate answer with inline citations from retrieved documents."""
         try:
-            answer = await self.llm.generate_answer(
-                state["query"], state["context"], max_tokens=500, temperature=0.7
+            result = await self.llm.generate_answer_with_citations(
+                state["query"],
+                state["documents"][:3],  # top 3 docs passed as numbered sources
+                max_tokens=500,
+                temperature=0.7,
             )
+
+            answer = result["answer"]
+            cited_indices = result["cited_indices"]
+
+            # Build citation objects from cited doc indices (1-based)
+            citations = []
+            for idx in cited_indices:
+                doc_index = idx - 1  # convert to 0-based
+                if 0 <= doc_index < len(state["documents"]):
+                    doc = state["documents"][doc_index]
+                    metadata = doc.get("metadata") or {}
+                    citations.append(
+                        {
+                            "index": idx,
+                            "source": metadata.get("source")
+                            or metadata.get("filename")
+                            or f"Document {idx}",
+                            "excerpt": (doc.get("content") or "")[:200],
+                        }
+                    )
 
             state["answer"] = answer
+            state["citations"] = citations
             state["tokens_used"] = await self.llm.estimate_tokens(
-                state["query"] + state["context"] + answer
+                state["query"] + answer
             )
 
-            logger.info("Answer generated for Q&A", answer_length=len(answer))
+            logger.info(
+                "Answer generated for Q&A",
+                answer_length=len(answer),
+                citation_count=len(citations),
+            )
 
         except Exception as e:
             logger.error("Answer generation failed in Q&A", error=str(e))
             state["answer"] = (
                 "I apologize, but I was unable to generate an answer at this time."
             )
+            state["citations"] = []
 
         return state
 
     async def _evaluate_response(self, state: AgentState) -> AgentState:
         """Evaluate the Q&A response."""
         try:
+            mock_response = type(
+                "Response",
+                (),
+                {
+                    "answer": state["answer"],
+                    "response_time_ms": state["response_time_ms"],
+                    "documents": state["documents"],
+                    "sql_response": None,
+                },
+            )()
+
+            cited_indices = [c["index"] for c in state.get("citations", [])]
+
             metrics = await self.evaluation.evaluate_query(
                 state["query"],
-                type(
-                    "Response",
-                    (),
-                    {
-                        "answer": state["answer"],
-                        "response_time_ms": state["response_time_ms"],
-                        "documents": state["documents"],
-                        "sql_response": None,
-                    },
-                )(),
+                mock_response,
                 sql_result=None,
                 retrieved_docs=state["documents"],
+                cited_indices=cited_indices,
             )
 
             state["evaluation_metrics"] = metrics
 
-            # Log to W&B
             if self.wandb.enabled:
                 await self.wandb.log_query_evaluation(
                     state["query"],
-                    type(
-                        "Response",
-                        (),
-                        {
-                            "answer": state["answer"],
-                            "response_time_ms": state["response_time_ms"],
-                            "documents": state["documents"],
-                            "sql_response": None,
-                        },
-                    )(),
+                    mock_response,
                     metrics,
                     state["response_time_ms"],
                 )
@@ -242,6 +268,7 @@ class AnalyticsAgent:
             sql_query=None,
             sql_result=None,
             documents=[],
+            citations=[],
             answer="",
             evaluation_metrics={},
             response_time_ms=0,

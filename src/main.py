@@ -1,5 +1,7 @@
 """Main FastAPI application for the RAG system."""
 
+import logging
+import sys
 from contextlib import asynccontextmanager
 
 import structlog
@@ -9,6 +11,12 @@ from prometheus_client import make_asgi_app
 
 from .api.routes import api_router
 from .core.config import settings
+
+logging.basicConfig(
+    stream=sys.stdout,
+    level=getattr(logging, settings.log_level.upper(), logging.INFO),
+    format="%(message)s",
+)
 
 # Configure structured logging
 structlog.configure(

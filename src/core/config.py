@@ -84,7 +84,15 @@ class Settings(BaseSettings):
         default=10, description="Batch size for evaluation"
     )
     evaluation_metrics: list[str] = Field(
-        default=["sql_accuracy", "link_accuracy", "relevance", "response_time"],
+        default=[
+            "sql_accuracy",
+            "link_accuracy",
+            "citation_accuracy",
+            "faithfulness",
+            "answer_relevance",
+            "completeness",
+            "response_time",
+        ],
         description="Evaluation metrics to compute",
     )
 

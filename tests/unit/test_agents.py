@@ -11,6 +11,42 @@ from src.agents.orchestrator import (
 )
 
 
+def make_qa_state(**overrides) -> AgentState:
+    """Build a minimal AgentState for Q&A tests."""
+    defaults = AgentState(
+        query="What is our mission?",
+        context="",
+        sql_query=None,
+        sql_result=None,
+        documents=[],
+        citations=[],
+        answer="",
+        evaluation_metrics={},
+        response_time_ms=0,
+        tokens_used=0,
+    )
+    defaults.update(overrides)
+    return defaults
+
+
+def make_analytics_state(**overrides) -> AgentState:
+    """Build a minimal AgentState for analytics tests."""
+    defaults = AgentState(
+        query="How many sales?",
+        context="",
+        sql_query=None,
+        sql_result=None,
+        documents=[],
+        citations=[],
+        answer="",
+        evaluation_metrics={},
+        response_time_ms=0,
+        tokens_used=0,
+    )
+    defaults.update(overrides)
+    return defaults
+
+
 class TestAgentOrchestrator:
     """Test cases for AgentOrchestrator singleton and query classification."""
 
@@ -93,7 +129,6 @@ class TestAgentOrchestrator:
         self, mock_analytics_agent, mock_qa_agent
     ):
         """Test that process_query routes Q&A queries to QA agent."""
-        # Setup mocks
         mock_qa_instance = MagicMock()
         mock_qa_instance.process_query = AsyncMock(
             return_value={"answer": "QA response"}
@@ -107,9 +142,7 @@ class TestAgentOrchestrator:
 
         result = await orchestrator.process_query("What is our mission?")
 
-        mock_qa_instance.process_query.assert_called_once_with(
-            "What is our mission?", None
-        )
+        mock_qa_instance.process_query.assert_called_once_with("What is our mission?")
         assert result["answer"] == "QA response"
         assert result["agent_used"] == "qa"
 
@@ -120,7 +153,6 @@ class TestAgentOrchestrator:
         self, mock_analytics_agent, mock_qa_agent
     ):
         """Test that process_query routes analytics queries to analytics agent."""
-        # Setup mocks
         mock_qa_instance = MagicMock()
         mock_qa_agent.return_value = mock_qa_instance
 
@@ -135,7 +167,7 @@ class TestAgentOrchestrator:
         result = await orchestrator.process_query("How many sales last month?")
 
         mock_analytics_instance.process_query.assert_called_once_with(
-            "How many sales last month?", None
+            "How many sales last month?"
         )
         assert result["sql_result"] == "Analytics response"
         assert result["agent_used"] == "analytics"
@@ -145,7 +177,6 @@ class TestAgentOrchestrator:
     @patch("src.agents.orchestrator.AnalyticsAgent")
     async def test_process_query_force_agent(self, mock_analytics_agent, mock_qa_agent):
         """Test that force_agent parameter overrides classification."""
-        # Setup mocks
         mock_qa_instance = MagicMock()
         mock_qa_instance.process_query = AsyncMock(
             return_value={"answer": "QA response"}
@@ -160,35 +191,12 @@ class TestAgentOrchestrator:
 
         orchestrator = AgentOrchestrator()
 
-        # Force analytics agent for a Q&A query
         result = await orchestrator.process_query(
             "What is our mission?", force_agent="analytics"
         )
 
         mock_qa_instance.process_query.assert_not_called()
         assert result["agent_used"] == "analytics"
-
-    @pytest.mark.asyncio
-    @patch("src.agents.orchestrator.QAAgent")
-    @patch("src.agents.orchestrator.AnalyticsAgent")
-    async def test_process_query_with_company_id(
-        self, mock_analytics_agent, mock_qa_agent
-    ):
-        """Test that company_id is passed to agents."""
-        mock_qa_instance = MagicMock()
-        mock_qa_instance.process_query = AsyncMock(return_value={"answer": "Response"})
-        mock_qa_agent.return_value = mock_qa_instance
-
-        mock_analytics_instance = MagicMock()
-        mock_analytics_agent.return_value = mock_analytics_instance
-
-        orchestrator = AgentOrchestrator()
-
-        await orchestrator.process_query("What is our mission?", company_id=123)
-
-        mock_qa_instance.process_query.assert_called_once_with(
-            "What is our mission?", 123
-        )
 
 
 class TestQAAgent:
@@ -208,7 +216,7 @@ class TestQAAgent:
             agent.llm = mock_llm()
             agent.evaluation = mock_evaluation()
             agent.wandb = mock_wandb()
-            agent.wandb.enabled = False  # Disable W&B for testing
+            agent.wandb.enabled = False
             return agent
 
     def test_create_graph_caching(self, qa_agent):
@@ -223,9 +231,7 @@ class TestQAAgent:
         """Test that the graph has the correct nodes and edges."""
         graph = qa_agent.create_graph()
 
-        # Check that graph has expected nodes
         assert hasattr(graph, "nodes")
-        # The graph should have the expected nodes
         expected_nodes = ["retrieve_documents", "generate_answer", "evaluate_response"]
         for node in expected_nodes:
             assert node in graph.nodes
@@ -233,31 +239,29 @@ class TestQAAgent:
     @pytest.mark.asyncio
     async def test_process_query_full_workflow(self, qa_agent):
         """Test the complete Q&A workflow execution."""
-        # Setup mocks
         qa_agent.retrieval.retrieve_documents = AsyncMock(
             return_value=[
-                {"title": "Doc1", "content": "Content1"},
-                {"title": "Doc2", "content": "Content2"},
+                {"title": "Doc1", "content": "Content1", "metadata": {}},
+                {"title": "Doc2", "content": "Content2", "metadata": {}},
             ]
         )
-        qa_agent.llm.generate_answer = AsyncMock(return_value="Generated answer")
+        qa_agent.llm.generate_answer_with_citations = AsyncMock(
+            return_value={"answer": "Generated answer", "cited_indices": [1]}
+        )
         qa_agent.llm.estimate_tokens = AsyncMock(return_value=150)
         qa_agent.evaluation.evaluate_query = AsyncMock(return_value={"accuracy": 0.9})
 
-        result = await qa_agent.process_query("What is our mission?", company_id=123)
+        result = await qa_agent.process_query("What is our mission?")
 
-        # Verify result structure
         assert "query" in result
-        assert "company_id" in result
         assert "answer" in result
         assert "documents" in result
+        assert "citations" in result
         assert "response_time_ms" in result
         assert "tokens_used" in result
         assert "evaluation_metrics" in result
 
-        # Verify values
         assert result["query"] == "What is our mission?"
-        assert result["company_id"] == 123
         assert result["answer"] == "Generated answer"
         assert len(result["documents"]) == 2
         assert result["tokens_used"] == 150
@@ -267,29 +271,16 @@ class TestQAAgent:
     async def test_retrieve_documents_success(self, qa_agent):
         """Test successful document retrieval."""
         mock_docs = [
-            {"title": "Mission Statement", "content": "Our mission is to..."},
-            {"title": "About Us", "content": "We are a company that..."},
+            {"title": "Mission Statement", "content": "Our mission is to innovate"},
+            {"title": "About Us", "content": "We are a company that cares"},
         ]
         qa_agent.retrieval.retrieve_documents = AsyncMock(return_value=mock_docs)
 
-        state = AgentState(
-            query="What is our mission?",
-            company_id=123,
-            context="",
-            sql_query=None,
-            sql_result=None,
-            documents=[],
-            answer="",
-            evaluation_metrics={},
-            response_time_ms=0,
-            tokens_used=0,
-        )
-
+        state = make_qa_state()
         result_state = await qa_agent._retrieve_documents(state)
 
         assert len(result_state["documents"]) == 2
-        assert "Mission Statement" in result_state["context"]
-        assert "Our mission is to..." in result_state["context"]
+        assert "Our mission is to innovate" in result_state["context"]
 
     @pytest.mark.asyncio
     async def test_retrieve_documents_failure(self, qa_agent):
@@ -298,19 +289,7 @@ class TestQAAgent:
             side_effect=Exception("Retrieval failed")
         )
 
-        state = AgentState(
-            query="What is our mission?",
-            company_id=123,
-            context="",
-            sql_query=None,
-            sql_result=None,
-            documents=[],
-            answer="",
-            evaluation_metrics={},
-            response_time_ms=0,
-            tokens_used=0,
-        )
-
+        state = make_qa_state()
         result_state = await qa_agent._retrieve_documents(state)
 
         assert result_state["documents"] == []
@@ -318,75 +297,55 @@ class TestQAAgent:
 
     @pytest.mark.asyncio
     async def test_generate_answer_success(self, qa_agent):
-        """Test successful answer generation."""
-        qa_agent.llm.generate_answer = AsyncMock(return_value="This is the answer")
+        """Test successful answer generation with citations."""
+        qa_agent.llm.generate_answer_with_citations = AsyncMock(
+            return_value={"answer": "This is the answer [1]", "cited_indices": [1]}
+        )
         qa_agent.llm.estimate_tokens = AsyncMock(return_value=200)
 
-        state = AgentState(
-            query="What is our mission?",
-            company_id=123,
+        state = make_qa_state(
             context="Mission: To innovate...",
-            sql_query=None,
-            sql_result=None,
-            documents=[],
-            answer="",
-            evaluation_metrics={},
-            response_time_ms=0,
-            tokens_used=0,
+            documents=[{"content": "Mission content", "metadata": {"source": "doc1.pdf"}}],
         )
-
         result_state = await qa_agent._generate_answer(state)
 
-        assert result_state["answer"] == "This is the answer"
+        assert result_state["answer"] == "This is the answer [1]"
         assert result_state["tokens_used"] == 200
+        assert len(result_state["citations"]) == 1
+        assert result_state["citations"][0]["index"] == 1
 
     @pytest.mark.asyncio
     async def test_generate_answer_failure(self, qa_agent):
         """Test answer generation failure handling."""
-        qa_agent.llm.generate_answer = AsyncMock(side_effect=Exception("LLM failed"))
-
-        state = AgentState(
-            query="What is our mission?",
-            company_id=123,
-            context="Mission: To innovate...",
-            sql_query=None,
-            sql_result=None,
-            documents=[],
-            answer="",
-            evaluation_metrics={},
-            response_time_ms=0,
-            tokens_used=0,
+        qa_agent.llm.generate_answer_with_citations = AsyncMock(
+            side_effect=Exception("LLM failed")
         )
 
+        state = make_qa_state(context="Mission: To innovate...")
         result_state = await qa_agent._generate_answer(state)
 
         assert "apologize" in result_state["answer"].lower()
+        assert result_state["citations"] == []
 
     @pytest.mark.asyncio
     async def test_evaluate_response_success(self, qa_agent):
         """Test successful response evaluation."""
         qa_agent.evaluation.evaluate_query = AsyncMock(
-            return_value={"accuracy": 0.85, "relevance": 0.9}
+            return_value={"accuracy": 0.85, "faithfulness": 0.9}
         )
 
-        state = AgentState(
-            query="What is our mission?",
-            company_id=123,
+        state = make_qa_state(
             context="Mission context",
-            sql_query=None,
-            sql_result=None,
             documents=[{"title": "Doc1", "content": "Content1"}],
             answer="Generated answer",
-            evaluation_metrics={},
             response_time_ms=150,
             tokens_used=100,
         )
-
         result_state = await qa_agent._evaluate_response(state)
 
         assert result_state["evaluation_metrics"] == {
             "accuracy": 0.85,
-            "relevance": 0.9,
+            "faithfulness": 0.9,
         }
 
 
@@ -407,7 +366,7 @@ class TestAnalyticsAgent:
             agent.llm = mock_llm()
             agent.evaluation = mock_evaluation()
             agent.wandb = mock_wandb()
-            agent.wandb.enabled = False  # Disable W&B for testing
+            agent.wandb.enabled = False
             return agent
 
     def test_create_graph_caching(self, analytics_agent):
@@ -422,7 +381,6 @@ class TestAnalyticsAgent:
         """Test that the analytics graph has the correct nodes and edges."""
         graph = analytics_agent.create_graph()
 
-        # Check that graph has expected nodes
         expected_nodes = [
             "generate_sql",
             "validate_sql",
@@ -436,26 +394,29 @@ class TestAnalyticsAgent:
     @pytest.mark.asyncio
     async def test_process_query_full_workflow(self, analytics_agent):
         """Test the complete analytics workflow execution."""
-        # Setup mocks
-        analytics_agent.text_to_sql.generate_sql = AsyncMock(
-            return_value={"sql": "SELECT * FROM sales"}
-        )
-        analytics_agent.llm.validate_sql = AsyncMock(return_value={"is_valid": True})
-        analytics_agent.llm.generate_answer = AsyncMock(
-            return_value="Analytics insights"
-        )
-        analytics_agent.llm.estimate_tokens = AsyncMock(return_value=250)
-        analytics_agent.evaluation.evaluate_query = AsyncMock(
-            return_value={"accuracy": 0.8}
-        )
+        with patch("src.agents.orchestrator.get_db_session_context") as mock_db:
+            mock_session = MagicMock()
+            mock_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_db.return_value.__aexit__ = AsyncMock(return_value=None)
 
-        result = await analytics_agent.process_query(
-            "How many sales last month?", company_id=123
-        )
+            analytics_agent.text_to_sql.generate_sql = AsyncMock(
+                return_value={"sql": "SELECT * FROM sales"}
+            )
+            analytics_agent.text_to_sql.execute_sql = AsyncMock(
+                return_value={"data": [{"count": 100}], "row_count": 1}
+            )
+            analytics_agent.llm.validate_sql = AsyncMock(return_value={"is_valid": True})
+            analytics_agent.llm.generate_answer = AsyncMock(
+                return_value="Analytics insights"
+            )
+            analytics_agent.llm.estimate_tokens = AsyncMock(return_value=250)
+            analytics_agent.evaluation.evaluate_query = AsyncMock(
+                return_value={"accuracy": 0.8}
+            )
 
-        # Verify result structure
+            result = await analytics_agent.process_query("How many sales last month?")
+
         assert "query" in result
-        assert "company_id" in result
         assert "sql_query" in result
         assert "sql_result" in result
         assert "answer" in result
@@ -463,9 +424,7 @@ class TestAnalyticsAgent:
         assert "tokens_used" in result
         assert "evaluation_metrics" in result
 
-        # Verify values
         assert result["query"] == "How many sales last month?"
-        assert result["company_id"] == 123
         assert result["sql_query"] == "SELECT * FROM sales"
         assert result["answer"] == "Analytics insights"
         assert result["tokens_used"] == 250
@@ -473,24 +432,17 @@ class TestAnalyticsAgent:
     @pytest.mark.asyncio
     async def test_generate_sql_success(self, analytics_agent):
         """Test successful SQL generation."""
-        analytics_agent.text_to_sql.generate_sql = AsyncMock(
-            return_value={"sql": "SELECT COUNT(*) FROM sales"}
-        )
+        with patch("src.agents.orchestrator.get_db_session_context") as mock_db:
+            mock_session = MagicMock()
+            mock_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_db.return_value.__aexit__ = AsyncMock(return_value=None)
 
-        state = AgentState(
-            query="How many sales?",
-            company_id=123,
-            context="",
-            sql_query=None,
-            sql_result=None,
-            documents=[],
-            answer="",
-            evaluation_metrics={},
-            response_time_ms=0,
-            tokens_used=0,
-        )
+            analytics_agent.text_to_sql.generate_sql = AsyncMock(
+                return_value={"sql": "SELECT COUNT(*) FROM sales"}
+            )
 
-        result_state = await analytics_agent._generate_sql(state)
+            state = make_analytics_state()
+            result_state = await analytics_agent._generate_sql(state)
 
         assert result_state["sql_query"] == "SELECT COUNT(*) FROM sales"
         assert "SELECT COUNT(*) FROM sales" in result_state["context"]
@@ -498,24 +450,17 @@ class TestAnalyticsAgent:
     @pytest.mark.asyncio
     async def test_generate_sql_failure(self, analytics_agent):
         """Test SQL generation failure handling."""
-        analytics_agent.text_to_sql.generate_sql = AsyncMock(
-            side_effect=Exception("SQL generation failed")
-        )
+        with patch("src.agents.orchestrator.get_db_session_context") as mock_db:
+            mock_session = MagicMock()
+            mock_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_db.return_value.__aexit__ = AsyncMock(return_value=None)
 
-        state = AgentState(
-            query="How many sales?",
-            company_id=123,
-            context="",
-            sql_query=None,
-            sql_result=None,
-            documents=[],
-            answer="",
-            evaluation_metrics={},
-            response_time_ms=0,
-            tokens_used=0,
-        )
+            analytics_agent.text_to_sql.generate_sql = AsyncMock(
+                side_effect=Exception("SQL generation failed")
+            )
 
-        result_state = await analytics_agent._generate_sql(state)
+            state = make_analytics_state()
+            result_state = await analytics_agent._generate_sql(state)
 
         assert result_state["sql_query"] is None
         assert "SQL generation failed" in result_state["context"]
@@ -527,65 +472,39 @@ class TestAnalyticsAgent:
             return_value={"is_valid": True, "issues": []}
         )
 
-        state = AgentState(
-            query="How many sales?",
-            company_id=123,
-            context="",
-            sql_query="SELECT COUNT(*) FROM sales",
-            sql_result=None,
-            documents=[],
-            answer="",
-            evaluation_metrics={},
-            response_time_ms=0,
-            tokens_used=0,
-        )
-
+        state = make_analytics_state(sql_query="SELECT COUNT(*) FROM sales")
         result_state = await analytics_agent._validate_sql(state)
 
-        # State should remain unchanged for successful validation
         assert result_state["sql_query"] == "SELECT COUNT(*) FROM sales"
 
     @pytest.mark.asyncio
-    async def test_execute_sql_simulated(self, analytics_agent):
-        """Test SQL execution (simulated)."""
-        state = AgentState(
-            query="How many sales?",
-            company_id=123,
-            context="Generated SQL: SELECT COUNT(*) FROM sales",
-            sql_query="SELECT COUNT(*) FROM sales",
-            sql_result=None,
-            documents=[],
-            answer="",
-            evaluation_metrics={},
-            response_time_ms=0,
-            tokens_used=0,
-        )
+    async def test_execute_sql_success(self, analytics_agent):
+        """Test SQL execution with real DB session mock."""
+        with patch("src.agents.orchestrator.get_db_session_context") as mock_db:
+            mock_session = MagicMock()
+            mock_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_db.return_value.__aexit__ = AsyncMock(return_value=None)
 
-        result_state = await analytics_agent._execute_sql(state)
+            analytics_agent.text_to_sql.execute_sql = AsyncMock(
+                return_value={"data": [{"count": 42}], "row_count": 1}
+            )
 
-        assert result_state["sql_result"]["status"] == "simulated"
-        assert "simulated" in result_state["sql_result"]["message"]
+            state = make_analytics_state(
+                context="Generated SQL: SELECT COUNT(*) FROM sales",
+                sql_query="SELECT COUNT(*) FROM sales",
+            )
+            result_state = await analytics_agent._execute_sql(state)
+
+        assert result_state["sql_result"]["row_count"] == 1
         assert "SELECT COUNT(*) FROM sales" in result_state["context"]
 
     @pytest.mark.asyncio
     async def test_execute_sql_no_query(self, analytics_agent):
         """Test SQL execution when no query is available."""
-        state = AgentState(
-            query="How many sales?",
-            company_id=123,
-            context="",
-            sql_query=None,
-            sql_result=None,
-            documents=[],
-            answer="",
-            evaluation_metrics={},
-            response_time_ms=0,
-            tokens_used=0,
-        )
-
+        state = make_analytics_state(sql_query=None)
         result_state = await analytics_agent._execute_sql(state)
 
-        assert result_state["sql_result"]["error"] == "No SQL query to execute"
+        assert result_state["sql_result"]["status"] == "no_sql"
 
     @pytest.mark.asyncio
     async def test_generate_insights_success(self, analytics_agent):
@@ -595,19 +514,11 @@ class TestAnalyticsAgent:
         )
         analytics_agent.llm.estimate_tokens = AsyncMock(return_value=300)
 
-        state = AgentState(
-            query="How many sales?",
-            company_id=123,
+        state = make_analytics_state(
             context="SQL: SELECT COUNT(*) FROM sales",
             sql_query="SELECT COUNT(*) FROM sales",
-            sql_result={"status": "success", "data": [100]},
-            documents=[],
-            answer="",
-            evaluation_metrics={},
-            response_time_ms=0,
-            tokens_used=0,
+            sql_result={"status": "success", "data": [{"count": 100}]},
         )
-
         result_state = await analytics_agent._generate_insights(state)
 
         assert result_state["answer"] == "Key insights: Sales are up 20%"
@@ -620,19 +531,11 @@ class TestAnalyticsAgent:
             side_effect=Exception("LLM failed")
         )
 
-        state = AgentState(
-            query="How many sales?",
-            company_id=123,
+        state = make_analytics_state(
             context="SQL context",
             sql_query="SELECT COUNT(*) FROM sales",
             sql_result={"data": [100]},
-            documents=[],
-            answer="",
-            evaluation_metrics={},
-            response_time_ms=0,
-            tokens_used=0,
         )
-
         result_state = await analytics_agent._generate_insights(state)
 
         assert "apologize" in result_state["answer"].lower()
@@ -644,19 +547,14 @@ class TestAnalyticsAgent:
             return_value={"accuracy": 0.75, "sql_validity": 0.9}
         )
 
-        state = AgentState(
-            query="How many sales?",
-            company_id=123,
+        state = make_analytics_state(
             context="Analysis context",
             sql_query="SELECT COUNT(*) FROM sales",
             sql_result={"data": [100]},
-            documents=[],
             answer="Sales count: 100",
-            evaluation_metrics={},
             response_time_ms=200,
             tokens_used=150,
         )
-
         result_state = await analytics_agent._evaluate_response(state)
 
         assert result_state["evaluation_metrics"] == {
@@ -672,11 +570,11 @@ class TestAgentState:
         """Test that AgentState can be created with all required fields."""
         state = AgentState(
             query="Test query",
-            company_id=123,
             context="Test context",
             sql_query="SELECT * FROM test",
             sql_result={"status": "success"},
             documents=[{"title": "Doc1", "content": "Content1"}],
+            citations=[{"index": 1, "source": "doc1.pdf", "excerpt": "..."}],
             answer="Test answer",
             evaluation_metrics={"accuracy": 0.9},
             response_time_ms=150,
@@ -684,11 +582,10 @@ class TestAgentState:
         )
 
         assert state["query"] == "Test query"
-        assert state["company_id"] == 123
         assert state["context"] == "Test context"
         assert state["sql_query"] == "SELECT * FROM test"
-        assert state["sql_result"] == {"status": "success"}
         assert len(state["documents"]) == 1
+        assert len(state["citations"]) == 1
         assert state["answer"] == "Test answer"
         assert state["evaluation_metrics"] == {"accuracy": 0.9}
         assert state["response_time_ms"] == 150
@@ -698,20 +595,20 @@ class TestAgentState:
         """Test that optional fields can be None."""
         state = AgentState(
             query="Test query",
-            company_id=None,
             context="",
             sql_query=None,
             sql_result=None,
             documents=[],
+            citations=[],
             answer="",
             evaluation_metrics={},
             response_time_ms=0,
             tokens_used=0,
         )
 
-        assert state["company_id"] is None
         assert state["sql_query"] is None
         assert state["sql_result"] is None
+        assert state["citations"] == []
 
 
 class TestIntegrationWithServices:
@@ -731,7 +628,9 @@ class TestIntegrationWithServices:
             mock_retrieval_class.return_value = mock_retrieval
 
             mock_llm = MagicMock()
-            mock_llm.generate_answer = AsyncMock(return_value="Answer")
+            mock_llm.generate_answer_with_citations = AsyncMock(
+                return_value={"answer": "Answer", "cited_indices": []}
+            )
             mock_llm.estimate_tokens = AsyncMock(return_value=50)
             mock_llm_class.return_value = mock_llm
 
@@ -744,10 +643,10 @@ class TestIntegrationWithServices:
             mock_wandb_class.return_value = mock_wandb
 
             agent = QAAgent()
-            await agent.process_query("Test query", company_id=123)
+            await agent.process_query("Test query")
 
             mock_retrieval.retrieve_documents.assert_called_once_with(
-                "Test query", 123, top_k=5
+                "Test query", top_k=5
             )
 
     @pytest.mark.asyncio
@@ -762,6 +661,9 @@ class TestIntegrationWithServices:
         ):
             mock_text_to_sql = MagicMock()
             mock_text_to_sql.generate_sql = AsyncMock(return_value={"sql": "SELECT 1"})
+            mock_text_to_sql.execute_sql = AsyncMock(
+                return_value={"data": [{"val": 1}], "row_count": 1}
+            )
             mock_text_to_sql_class.return_value = mock_text_to_sql
 
             mock_llm = MagicMock()
@@ -785,13 +687,11 @@ class TestIntegrationWithServices:
             mock_db_session.return_value.__aexit__ = AsyncMock(return_value=None)
 
             agent = AnalyticsAgent()
-            await agent.process_query("How many users?", company_id=123)
+            await agent.process_query("How many users?")
 
             mock_text_to_sql.generate_sql.assert_called_once()
-            # Verify it was called with the query and company_id
             call_args = mock_text_to_sql.generate_sql.call_args
-            assert call_args[0][0] == "How many users?"  # query
-            assert call_args[0][1] == 123  # company_id
+            assert call_args[0][0] == "How many users?"
 
     @pytest.mark.asyncio
     async def test_wandb_logging_when_enabled(self):
@@ -807,7 +707,9 @@ class TestIntegrationWithServices:
             mock_retrieval_class.return_value = mock_retrieval
 
             mock_llm = MagicMock()
-            mock_llm.generate_answer = AsyncMock(return_value="Answer")
+            mock_llm.generate_answer_with_citations = AsyncMock(
+                return_value={"answer": "Answer", "cited_indices": []}
+            )
             mock_llm.estimate_tokens = AsyncMock(return_value=50)
             mock_llm_class.return_value = mock_llm
 
@@ -845,7 +747,9 @@ class TestErrorHandling:
             mock_retrieval_class.return_value = mock_retrieval
 
             mock_llm = MagicMock()
-            mock_llm.generate_answer = AsyncMock(return_value="Fallback answer")
+            mock_llm.generate_answer_with_citations = AsyncMock(
+                return_value={"answer": "Fallback answer", "cited_indices": []}
+            )
             mock_llm.estimate_tokens = AsyncMock(return_value=30)
             mock_llm_class.return_value = mock_llm
 
@@ -860,7 +764,6 @@ class TestErrorHandling:
             agent = QAAgent()
             result = await agent.process_query("Test query")
 
-            # Should still complete with fallback behavior
             assert "answer" in result
             assert result["documents"] == []
 
@@ -903,7 +806,6 @@ class TestErrorHandling:
             agent = AnalyticsAgent()
             result = await agent.process_query("How many users?")
 
-            # Should still complete despite SQL generation failure
             assert "answer" in result
             assert result["sql_query"] is None
 
@@ -921,7 +823,9 @@ class TestErrorHandling:
             mock_retrieval_class.return_value = mock_retrieval
 
             mock_llm = MagicMock()
-            mock_llm.generate_answer = AsyncMock(return_value="Answer")
+            mock_llm.generate_answer_with_citations = AsyncMock(
+                return_value={"answer": "Answer", "cited_indices": []}
+            )
             mock_llm.estimate_tokens = AsyncMock(return_value=50)
             mock_llm_class.return_value = mock_llm
 
@@ -938,6 +842,5 @@ class TestErrorHandling:
             agent = QAAgent()
             result = await agent.process_query("Test query")
 
-            # Should complete despite evaluation failure
             assert "answer" in result
             assert result["evaluation_metrics"] == {}

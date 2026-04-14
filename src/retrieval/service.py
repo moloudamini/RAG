@@ -1,6 +1,7 @@
 """Retrieval service: Focuses exclusively on querying ChromaDB and reranking candidates."""
 
 from typing import List, Dict, Any
+import math
 import structlog
 import os
 
@@ -70,6 +71,10 @@ class RetrievalService:
 
         return candidates
 
+    @staticmethod
+    def _sigmoid(x: float) -> float:
+        return 1.0 / (1.0 + math.exp(-x))
+
     def _rerank(self, query: str, candidates: List[Dict], top_k: int) -> List[Dict]:
         """Rerank candidates using a cross-encoder model."""
         try:
@@ -81,7 +86,7 @@ class RetrievalService:
             ce_scores = self._reranker.predict(pairs)
 
             for i, c in enumerate(candidates):
-                c["similarity_score"] = float(ce_scores[i])
+                c["similarity_score"] = self._sigmoid(float(ce_scores[i]))
 
             candidates.sort(key=lambda x: x["similarity_score"], reverse=True)
             return candidates[:top_k]

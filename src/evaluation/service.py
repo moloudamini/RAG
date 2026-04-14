@@ -1,11 +1,12 @@
 """Evaluation service for measuring RAG system performance."""
 
-from typing import Dict, List, Optional, Any
+from typing import TYPE_CHECKING, Dict, List, Optional, Any
 import structlog
-from difflib import SequenceMatcher
-import re
 
 from ..core.config import settings
+
+if TYPE_CHECKING:
+    from ..llm.service import LLMService
 
 logger = structlog.get_logger()
 
@@ -13,9 +14,16 @@ logger = structlog.get_logger()
 class EvaluationService:
     """Service for evaluating RAG system performance metrics."""
 
-    def __init__(self):
-        """Initialize the evaluation service."""
+    def __init__(self, llm: Optional["LLMService"] = None):
+        """Initialize the evaluation service.
+
+        Args:
+            llm: Optional LLMService used for LLM-as-judge scoring. When
+                 provided, faithfulness/answer_relevance/completeness metrics
+                 are computed via a second LLM call instead of heuristics.
+        """
         self.metrics_config = settings.evaluation_metrics
+        self._llm = llm
 
     async def evaluate_query(
         self,
@@ -23,6 +31,7 @@ class EvaluationService:
         response: Any,
         sql_result: Optional[Dict] = None,
         retrieved_docs: List[Dict] = [],
+        cited_indices: List[int] = [],
     ) -> Dict[str, float]:
         """
         Evaluate a query response and return metrics.
@@ -48,15 +57,30 @@ class EvaluationService:
             # Link Accuracy (relevance of retrieved documents)
             if retrieved_docs and "link_accuracy" in self.metrics_config:
                 metrics["link_accuracy"] = self._evaluate_link_accuracy(
-                    query, retrieved_docs
+                    query, retrieved_docs, cited_indices
                 )
 
-            # Answer Relevance
-            if "relevance" in self.metrics_config:
-                metrics["relevance"] = self._evaluate_answer_relevance(
-                    query,
-                    response.answer if hasattr(response, "answer") else str(response),
+            # Citation Accuracy (fraction of cited indices that are valid)
+            if cited_indices and "citation_accuracy" in self.metrics_config:
+                metrics["citation_accuracy"] = self._evaluate_citation_accuracy(
+                    cited_indices, len(retrieved_docs)
                 )
+
+            # LLM-as-judge metrics (faithfulness, answer_relevance, completeness)
+            judge_metrics_requested = any(
+                m in self.metrics_config
+                for m in ("faithfulness", "answer_relevance", "completeness")
+            )
+            if self._llm is not None and judge_metrics_requested and retrieved_docs:
+                answer_text = (
+                    response.answer if hasattr(response, "answer") else str(response)
+                )
+                judge_scores = await self._llm.judge_answer(
+                    query, answer_text, retrieved_docs
+                )
+                for metric in ("faithfulness", "answer_relevance", "completeness"):
+                    if metric in self.metrics_config:
+                        metrics[metric] = judge_scores.get(metric, 0.0)
 
             # Response Time (if available)
             if hasattr(response, "response_time_ms") and response.response_time_ms:
@@ -111,83 +135,44 @@ class EvaluationService:
         return max(0.0, min(1.0, score))
 
     def _evaluate_link_accuracy(
-        self, query: str, retrieved_docs: List[Dict[str, Any]]
+        self,
+        query: str,
+        retrieved_docs: List[Dict[str, Any]],
+        cited_indices: List[int] = [],
     ) -> float:
-        """Evaluate the relevance of retrieved documents."""
+        """Evaluate retrieval quality using vector similarity scores.
+
+        Returns the average similarity score of retrieved docs, gated by the
+        fraction that meet the similarity threshold. This purely reflects the
+        retrieval system's output — no heuristic string matching.
+        """
         if not retrieved_docs:
             return 0.0
 
-        total_relevance = 0.0
-        query_lower = query.lower()
+        scores = [doc.get("similarity_score", 0.0) for doc in retrieved_docs]
+        avg_score = sum(scores) / len(scores)
 
-        for doc in retrieved_docs:
-            content = doc.get("content", "").lower()
-            title = doc.get("title", "").lower()
-
-            # Calculate text similarity
-            content_similarity = SequenceMatcher(None, query_lower, content).ratio()
-            title_similarity = SequenceMatcher(None, query_lower, title).ratio()
-
-            # Weighted combination
-            relevance = (content_similarity * 0.7) + (title_similarity * 0.3)
-
-            # Boost if document has high similarity score from vector search
-            vector_similarity = doc.get("similarity_score", 0.0)
-            relevance = (relevance + vector_similarity) / 2
-
-            total_relevance += relevance
-
-        # Average relevance across all documents
-        avg_relevance = total_relevance / len(retrieved_docs)
-
-        # Apply threshold - documents below similarity threshold don't count
-        relevant_docs = [
-            doc
-            for doc in retrieved_docs
-            if doc.get("similarity_score", 0.0) >= settings.similarity_threshold
-        ]
-
-        coverage_ratio = len(relevant_docs) / max(len(retrieved_docs), 1)
-
-        return avg_relevance * coverage_ratio
-
-    def _evaluate_answer_relevance(self, query: str, answer: str) -> float:
-        """Evaluate how relevant the answer is to the query."""
-        if not answer or not query:
-            return 0.0
-
-        query_lower = query.lower()
-        answer_lower = answer.lower()
-
-        # Direct text overlap
-        query_words = set(re.findall(r"\b\w+\b", query_lower))
-        answer_words = set(re.findall(r"\b\w+\b", answer_lower))
-
-        overlap = len(query_words.intersection(answer_words))
-        total_unique = len(query_words.union(answer_words))
-
-        if total_unique == 0:
-            return 0.0
-
-        overlap_score = overlap / total_unique
-
-        # Sequence similarity
-        seq_similarity = SequenceMatcher(None, query_lower, answer_lower).ratio()
-
-        # Length appropriateness (answers shouldn't be too short or too long)
-        answer_length = len(answer)
-        length_score = 1.0
-        if answer_length < 10:
-            length_score = 0.3  # Too short
-        elif answer_length > 2000:
-            length_score = 0.7  # Too long
-
-        # Combine scores
-        relevance = (
-            (overlap_score * 0.4) + (seq_similarity * 0.4) + (length_score * 0.2)
+        above_threshold = sum(
+            1 for s in scores if s >= settings.similarity_threshold
         )
+        coverage_ratio = above_threshold / len(scores)
 
-        return max(0.0, min(1.0, relevance))
+        return min(1.0, avg_score * coverage_ratio)
+
+    def _evaluate_citation_accuracy(
+        self, cited_indices: List[int], doc_count: int
+    ) -> float:
+        """Evaluate whether cited document indices are valid (non-hallucinated).
+
+        A citation is valid if its index is within the range of retrieved documents.
+        Score = fraction of cited indices that are in [1, doc_count].
+        """
+        if not cited_indices:
+            return 0.0
+
+        valid = sum(1 for idx in cited_indices if 1 <= idx <= doc_count)
+        return valid / len(cited_indices)
+
 
     async def evaluate_batch(
         self, evaluations: List[Dict[str, Any]]

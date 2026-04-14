@@ -1,7 +1,7 @@
 """Text-to-SQL conversion service using Ollama."""
 
 import re
-from typing import Dict, Optional, Any
+from typing import Dict, Any
 
 import structlog
 import ollama
