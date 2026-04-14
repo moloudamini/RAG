@@ -10,7 +10,8 @@ A multi-agent system with Retrieval-Augmented Generation (RAG) that uses LangGra
 - **Auto Schema Introspection**: Reads live table schemas directly from the database 
 - **Automatic Query Routing**: Intelligently routes queries to the appropriate agent based on content
 - **Ollama Integration**: Local LLM inference for cost-effective, private deployment
-- **Evaluation Pipeline**: Metrics including link accuracy, relevance, and response time
+- **Evaluation Pipeline**: LLM-as-judge metrics (faithfulness, answer relevance, completeness), link accuracy via vector similarity, citation accuracy, and SQL golden set validation
+- **SQL Golden Set**: Reference-SQL-based evaluation that validates generated SQL returns the same data as hand-written ground truth queries
 - **W&B Integration**: Experiment tracking and performance monitoring
 
 ## Architecture
@@ -24,7 +25,7 @@ A multi-agent system with Retrieval-Augmented Generation (RAG) that uses LangGra
 1. **Query Classification**: Automatically determines if query is Q&A or Analytics based on keywords and patterns
 2. **Q&A Agent**: Uses retrieval-augmented generation for general questions
 3. **Analytics Agent**: Converts natural language to SQL with validation and execution
-4. **Evaluation**: Comprehensive metrics for accuracy, relevance, and performance
+4. **Evaluation**: LLM-as-judge scoring (faithfulness, answer relevance, completeness) + SQL golden set with reference SQL comparison
 5. **Monitoring**: W&B integration for experiment tracking and system observability
 
 ### Agents
@@ -139,13 +140,45 @@ curl -X POST "http://localhost:8000/api/v1/queries/" \
     "is_valid": true
   },
   "documents": [],
-  "answer": "Based on the SQL results, the total sales by product category are:\n\n* Storage: $2400.00\n* Developer Tools: $45.00\n* Hardware: $850.50\n* Enterprise Software: $1200.00\n\nThese totals can be obtained by summing up the 'total_sales' column for each unique 'category'.",
+  "answer": "Based on the SQL results, the total sales by product category are: Storage: $2400.00, Hardware: $850.50",
   "response_time_ms": 8077,
   "tokens_used": 206,
   "evaluation_metrics": {
-    "sql_accuracy": 0.35,
-    "relevance": 0.2803836409699602
+    "sql_accuracy": 0.65,
+    "link_accuracy": 0.72,
+    "citation_accuracy": 1.0,
+    "faithfulness": 0.91,
+    "answer_relevance": 0.88,
+    "completeness": 0.85
   }
+}
+```
+
+### SQL Golden Set Evaluation
+
+Validate the analytics agent's SQL generation against hand-written reference queries:
+
+```bash
+# Run all 15 golden set entries
+curl -X POST "http://localhost:8000/api/v1/evaluation/golden-set"
+
+# Run a subset by tag (aggregation, filter, join, group_by, temporal)
+curl -X POST "http://localhost:8000/api/v1/evaluation/golden-set?tag=join"
+```
+
+Each entry is scored on: execution success, SQL keyword coverage, column match, row count, safety, and **result match** — whether the generated SQL returns the same data as the reference query against the live database.
+
+To add golden set entries, edit `tests/fixtures/sql_golden_set.json`:
+
+```json
+{
+  "id": "my_query",
+  "query": "Natural language question",
+  "reference_sql": "SELECT ... FROM ...;",
+  "expected_sql_keywords": ["SELECT", "table_name"],
+  "expected_columns": ["col"],
+  "expected_row_count_min": 0,
+  "tags": ["aggregation"]
 }
 ```
 
@@ -169,7 +202,7 @@ uv run pytest tests/ --cov=src --cov-report=html
 # Lint and format
 uv run ruff check .
 uv run ruff format .
-
+```
 
 ## Docker Deployment
 
@@ -187,8 +220,6 @@ docker run -p 8000:8000 \
 ## Monitoring
 
 - **API Docs**: http://localhost:8000/docs
-- **Health**: http://localhost:8000/health
-- **Metrics**: http://localhost:8000/metrics
 - **W&B Dashboard**: https://wandb.ai/[your-entity]/rag-system
 
 ## Security
